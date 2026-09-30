@@ -1,0 +1,30 @@
+import { DndContext, DragEndEvent, PointerSensor, useDraggable, useDroppable, useSensor, useSensors } from '@dnd-kit/core';
+import { useEffect, useMemo, useState } from 'react';
+import type { FocusTask, Priority, Task } from '../types/database';
+
+type Props = { tasks: FocusTask[]; updateTask: (id: string, patch: Partial<Task>) => Promise<void>; pushTimeEntry?: (task: FocusTask, minutes: number) => Promise<void> };
+const columns: { priority: Priority; label: string }[] = [{ priority: 1, label: 'Immediate (Priority 1)' }, { priority: 2, label: 'Up Next (Priority 2)' }, { priority: 3, label: 'Later (Priority 3)' }];
+const blocks = ['Morning', 'Afternoon', 'Late'] as const;
+
+function Column({ priority, label, children }: { priority: Priority; label: string; children: React.ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({ id: `priority-${priority}`, data: { priority } });
+  return <section ref={setNodeRef} className={`glass-panel min-h-72 p-3 ${isOver ? 'ring-2 ring-indigo-400/70' : ''}`}><h2 className="mb-3 text-sm font-semibold">{label}</h2>{children}</section>;
+}
+function Card({ task, updateTask, pushTimeEntry }: { task: FocusTask; updateTask: Props['updateTask']; pushTimeEntry?: Props['pushTimeEntry'] }) {
+  const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({ id: task.id, data: { task } });
+  const style = transform ? { transform: `translate3d(${transform.x}px, ${transform.y}px, 0)` } : undefined;
+  return <article ref={setNodeRef} style={style} className={`glass-card mb-3 p-3 ${isDragging ? 'z-10 opacity-60 shadow-2xl' : ''}`}>
+    <div className="flex items-start gap-2"><button {...listeners} {...attributes} aria-label="Drag task" className="mt-0.5 text-slate-400">⠿</button><div className="min-w-0 flex-1"><p className="font-medium">{task.name}</p><div className="mt-1 flex flex-wrap gap-1 text-xs"><span className="rounded bg-indigo-400/15 px-1.5 py-0.5 text-indigo-200">{task.project.name}</span><span className="rounded bg-white/10 px-1.5 py-0.5 text-slate-300">{task.project.client.name}</span></div></div></div>
+    <input aria-label="Focus note" defaultValue={task.focus_note ?? ''} onBlur={(e) => e.target.value !== (task.focus_note ?? '') && updateTask(task.id, { focus_note: e.target.value || null })} placeholder="Add a focus note…" className="mt-3 w-full border-b border-white/10 bg-transparent pb-1 text-sm outline-none placeholder:text-slate-500 focus:border-indigo-300" />
+    {task.estimated_minutes && <div className="mt-3"><div className="mb-1 flex justify-between text-[11px] text-slate-400"><span>Time progress</span><span>{task.logged_minutes} / {task.estimated_minutes}m</span></div><div className="h-1.5 overflow-hidden rounded-full bg-white/10"><div className="h-full rounded-full bg-indigo-400" style={{ width: `${Math.min(100, task.logged_minutes / task.estimated_minutes * 100)}%` }} /></div></div>}
+    <div className="mt-3 flex items-center gap-1.5 text-xs"><button onClick={() => updateTask(task.id, { status: 'Done', in_focus: false })} className="rounded bg-emerald-400/15 px-2 py-1 text-emerald-200">Complete</button><button onClick={() => updateTask(task.id, { in_focus: false })} aria-label="Remove from focus" className="rounded bg-amber-300/15 px-2 py-1 text-amber-200">★</button>{[15, 30].map(minutes => <button key={minutes} onClick={async () => { await updateTask(task.id, { logged_minutes: task.logged_minutes + minutes }); if (task.paymo_id) await pushTimeEntry?.(task, minutes); }} className="rounded bg-white/10 px-2 py-1">+{minutes}m</button>)}</div>
+  </article>;
+}
+export function FocusBoard({ tasks, updateTask, pushTimeEntry }: Props) {
+  const [optimistic, setOptimistic] = useState(tasks); const [active, setActive] = useState<FocusTask | null>(null); const [view, setView] = useState<'priority' | 'daily'>('priority');
+  useEffect(() => setOptimistic(tasks), [tasks]);
+  const visible = useMemo(() => optimistic.filter(t => t.in_focus && !['Done', 'Archived'].includes(t.status) && t.project.status !== 'Archived'), [optimistic]);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 6 } }));
+  async function move(event: DragEndEvent) { setActive(null); const to = event.over?.data.current?.priority as Priority | undefined; const task = optimistic.find(t => t.id === event.active.id); if (!task || !to || task.priority === to) return; const before = optimistic; setOptimistic(ts => ts.map(t => t.id === task.id ? { ...t, priority: to } : t)); try { await updateTask(task.id, { priority: to }); } catch { setOptimistic(before); } }
+  return <><div className="mb-4 inline-flex rounded-lg bg-white/10 p-1 text-sm"><button onClick={() => setView('priority')} className={`rounded-md px-3 py-1.5 ${view === 'priority' ? 'bg-indigo-500 text-white' : 'text-slate-300'}`}>Priority View</button><button onClick={() => setView('daily')} className={`rounded-md px-3 py-1.5 ${view === 'daily' ? 'bg-indigo-500 text-white' : 'text-slate-300'}`}>Daily Block View</button></div>{view === 'daily' ? <div className="grid gap-4 lg:grid-cols-3">{blocks.map(block => <section className="glass-panel min-h-72 p-3" key={block}><h2 className="mb-3 text-sm font-semibold">{block}</h2>{visible.filter(t => t.time_block === block).map(task => <Card key={task.id} task={task} updateTask={updateTask} pushTimeEntry={pushTimeEntry} />)}</section>)}</div> : <DndContext sensors={sensors} onDragStart={e => setActive(optimistic.find(t => t.id === e.active.id) ?? null)} onDragEnd={move} onDragCancel={() => setActive(null)}><div className="grid gap-4 lg:grid-cols-3">{columns.map(c => { const list = visible.filter(t => t.priority === c.priority); return <Column key={c.priority} {...c}>{c.priority === 1 && list.length > 5 && <div className="mb-3 animate-pulse rounded-full border border-amber-300/30 bg-amber-400/15 px-3 py-1 text-xs text-amber-100">Over capacity: {list.length} immediate tasks</div>}{list.map(task => <Card key={task.id} task={task} updateTask={updateTask} pushTimeEntry={pushTimeEntry} />)}</Column> })}</div></DndContext>}</>;
+}

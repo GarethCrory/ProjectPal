@@ -1,0 +1,11 @@
+import { useEffect, useState } from 'react';
+import { makeAssertiveSchedule, type ScheduleItem } from '../lib/ai';
+import type { FocusTask, Task } from '../types/database';
+const dayKey = () => { const now = new Date(); return `taskboard-standup:${now.getFullYear()}-${now.getMonth() + 1}-${now.getDate()}`; };
+export function DailyStandupModal({ tasks, updateTask, generateSchedule }: { tasks: FocusTask[]; updateTask: (id: string, patch: Partial<Task>) => Promise<void>; generateSchedule?: () => Promise<{ items: ScheduleItem[]; overbooked: boolean }> }) {
+  const [open, setOpen] = useState(false); const [schedule, setSchedule] = useState<ScheduleItem[]>([]); const [overbooked, setOverbooked] = useState(false);
+  const regenerate = async () => { const next = generateSchedule ? await generateSchedule() : makeAssertiveSchedule(tasks); setSchedule(next.items); setOverbooked(next.overbooked); };
+  useEffect(() => { if (!localStorage.getItem(dayKey())) { setOpen(true); void regenerate(); } }, []); // first login for this local calendar day
+  if (!open) return null;
+  return <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 grid place-items-center bg-slate-950/55 p-4"><section className="glass-panel w-full max-w-lg p-6"><h2 className="text-xl font-semibold">Daily Standup</h2><p className="mt-1 text-sm text-muted-ink">Priority 1 work is capped at four hours per block. Protect the plan.</p>{overbooked && <p className="mt-4 rounded-lg bg-amber-400/15 p-3 text-sm text-amber-100">Overbooked: some work exceeds the available morning and afternoon capacity.</p>}<div className="mt-4 space-y-2">{schedule.map(item => <div className="flex justify-between rounded-lg bg-white/5 p-2 text-sm" key={item.taskId}><span>{tasks.find(t => t.id === item.taskId)?.name}</span><span>{item.time_block} · {item.estimated_minutes}m</span></div>)}</div><div className="mt-6 flex justify-end gap-2"><button onClick={() => void regenerate()} className="rounded-lg bg-white/10 px-3 py-2 text-sm">Regenerate Lighter Load</button><button onClick={async () => { await Promise.all(schedule.map(s => updateTask(s.taskId, { time_block: s.time_block }))); localStorage.setItem(dayKey(), '1'); setOpen(false); }} className="rounded-lg bg-indigo-500 px-3 py-2 text-sm">Accept Schedule</button></div></section></div>;
+}

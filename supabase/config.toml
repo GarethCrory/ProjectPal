@@ -1,0 +1,4 @@
+[functions.paymo-sync]
+# The handler validates the caller with auth.getUser() itself. This avoids a
+# gateway-level JWT mismatch while retaining authenticated-user-only syncs.
+verify_jwt = false
